@@ -69,9 +69,9 @@ class MemoryMonitor:
                         )
                     except ImportError:
                         raise RuntimeError(
-                            "❌ bitsandbytes required for 4-bit quantization. Install with: pip install bitsandbytes")
+                            " bitsandbytes required for 4-bit quantization. Install with: pip install bitsandbytes")
                     except Exception as e:
-                        raise RuntimeError(f"❌ 4-bit quantization failed: {e}")
+                        raise RuntimeError(f" 4-bit quantization failed: {e}")
                 else:
                     # Regular dtype casting
                     return param.to(target_device, dtype=dtype_map[cast_to], non_blocking=True)
@@ -121,7 +121,7 @@ class MemoryMonitor:
 
             return layer
         except Exception as e:
-            print(f"⚠️ 4-bit replacement failed: {e}")
+            print(f" 4-bit replacement failed: {e}")
             return layer
 
 
@@ -129,7 +129,7 @@ def check_wsl_free_memory():
     """Quick WSL memory check using free command"""
     try:
         result = subprocess.run(['free', '-h'], capture_output=True, text=True)
-        print("\n📊 WSL Memory (free -h):")
+        print("\n WSL Memory (free -h):")
         print(result.stdout)
 
         # Get percentage
@@ -148,7 +148,7 @@ def check_wsl_free_memory():
 
 def print_detailed_memory_stats(step_info=""):
     """Monitor both GPU and CPU memory"""
-    print(f"\n📊 Memory Stats {step_info}")
+    print(f"\n Memory Stats {step_info}")
 
     # GPU memory
     if torch.cuda.is_available():
@@ -164,7 +164,7 @@ def print_detailed_memory_stats(step_info=""):
 
     # Check if we're hitting swap (bad!)
     if swap.percent > 6.5:
-        print(f"⚠️  WARNING: High swap usage ({swap.percent:.1f}%) - CPU memory pressure!")
+        print(f"  WARNING: High swap usage ({swap.percent:.1f}%) - CPU memory pressure!")
 
 
 def print_gpu_layer_state(stage, layer_idx, cpu_swappable_layers, layers, get_layer_device):
@@ -176,7 +176,7 @@ def print_gpu_layer_state(stage, layer_idx, cpu_swappable_layers, layers, get_la
             if device.type == 'cuda':
                 gpu_layers.append(idx)
 
-    print(f"🎯 GPU LAYERS {stage} layer {layer_idx}: {gpu_layers} (count: {len(gpu_layers)})")
+    print(f" GPU LAYERS {stage} layer {layer_idx}: {gpu_layers} (count: {len(gpu_layers)})")
     return gpu_layers
 
 def aggressive_cpu_cleanup():
@@ -196,6 +196,6 @@ def aggressive_cpu_cleanup():
             except:
                 pass
 
-        print(f"🧹 CPU cleanup: RAM {ram.percent:.1f}%, Swap {swap.percent:.1f}%")
+        print(f" CPU cleanup: RAM {ram.percent:.1f}%, Swap {swap.percent:.1f}%")
 
 
