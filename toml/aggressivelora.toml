@@ -3,7 +3,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 # Output path for training runs
-output_dir = '/home/obisin/diffusion-pipe/data/output/bengalcat'
+output_dir = '/data/output/bengalcat'
 dataset = 'toml/bengalcatdataset.toml'
 # ═══════════════════════════════════════════════════════════════
 # TRAINING SETTINGS - AGGRESSIVE TIER (OVERNIGHT TRAINING)
