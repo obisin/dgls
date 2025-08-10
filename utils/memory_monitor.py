@@ -7,7 +7,7 @@ import psutil
 import bitsandbytes as bnb
 
 # =============================================================================
-# PRECISION FRAMEWORK CODE
+# MEMORY FRAMEWORK CODE
 # =============================================================================
 
 class MemoryMonitor:
@@ -197,5 +197,6 @@ def aggressive_cpu_cleanup():
                 pass
 
         print(f" CPU cleanup: RAM {ram.percent:.1f}%, Swap {swap.percent:.1f}%")
+
 
 
