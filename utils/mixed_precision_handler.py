@@ -79,9 +79,9 @@ class CastingHandler:
                         )
                     except ImportError:
                         raise RuntimeError(
-                            "❌ bitsandbytes required for 4-bit quantization. Install with: pip install bitsandbytes")
+                            " bitsandbytes required for 4-bit quantization. Install with: pip install bitsandbytes")
                     except Exception as e:
-                        raise RuntimeError(f"❌ 4-bit quantization failed: {e}")
+                        raise RuntimeError(f" 4-bit quantization failed: {e}")
                 else:
                     # Regular dtype casting
                     return param.to(target_device, dtype=dtype_map[cast_to], non_blocking=True)
@@ -129,13 +129,13 @@ class CastingHandler:
 
             return layer
         except Exception as e:
-            print(f"⚠️ 4-bit replacement failed: {e}")
+            print(f"️ 4-bit replacement failed: {e}")
             return layer
 
 
     def precast_all_layers(self, cpu_swappable_layers, layers):
         """Cast all layer dtypes once at startup using existing cast_to_dtype"""
-        print("🎨 Pre-casting layer dtypes (one-time setup)...")
+        print(" Pre-casting layer dtypes (one-time setup)...")
         casted_layers = 0
 
         for i, layer in enumerate(layers):
@@ -360,7 +360,7 @@ def patch_mixed_precision(mixed_precision_target='auto'):
     # Patch gradient clipping
     torch.nn.utils.clip_grad_norm_ = _GLOBAL_HANDLER.create_safe_clip_function(_ORIGINAL_CLIP_GRAD_NORM)
 
-    print(f"✅ Mixed precision gradient handling patched")
+    print(f" Mixed precision gradient handling patched")
     print(f"   Target dtype strategy: {mixed_precision_target}")
     if mixed_precision_target == 'auto':
         print(f"   Auto conversions: f8→bf16, int8→f16")
@@ -381,7 +381,7 @@ def unpatch_mixed_precision():
     if _ORIGINAL_CLIP_GRAD_NORM:
         torch.nn.utils.clip_grad_norm_ = _ORIGINAL_CLIP_GRAD_NORM
         _GLOBAL_HANDLER = None
-        print("✅ Mixed precision patches removed")
+        print(" Mixed precision patches removed")
 
 
 # Context manager for temporary patching
@@ -432,9 +432,9 @@ if __name__ == "__main__":
         # Test safe clipping
         try:
             norm = torch.nn.utils.clip_grad_norm_([test_param_f32, test_param_f8], 1.0)
-            print(f"✅ Safe clipping test passed, norm: {norm:.4f}")
+            print(f" Safe clipping test passed, norm: {norm:.4f}")
         except Exception as e:
-            print(f"❌ Safe clipping test failed: {e}")
+            print(f" Safe clipping test failed: {e}")
 
         # Cleanup
         unpatch_mixed_precision()
