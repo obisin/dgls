@@ -1,3 +1,6 @@
+torch
+torchvision
+torchaudio
 deepspeed==0.17.0
 toml
 transformers
@@ -26,3 +29,5 @@ easydict
 ftfy
 pytorch-optimizer
 wandb
+psutil
+transformer_engine
