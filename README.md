@@ -1,5 +1,7 @@
 # DGLS (Dynamic GPU Layer Swapping)
 
+CURRENTLY BEING UPDATED FOR NEW MODELS AND OPTIMISATIONS. I WILL BE DOING ALOT OF TESTING ON THIS CURRENTLY AND IT MAY HAVE A FEW BUGS.
+
 Smart dynamic layer swapping between GPU and CPU for optimal performance with comprehensive mixed precision handling, synchronization control, and copy-compute overlap optimization. Built on top of diffusion-pipe. The primary reqason fo rthis in Linux was to test DeepSpeed features. Most of the code can be easily ported to Windows as its in Pytorch.
 
 ## Features
@@ -581,5 +583,6 @@ SOFTWARE.
 
 
 **Usage Compliance**: Users are responsible for compliance with licenses of any underlying training frameworks they integrate with DGLS.
+
 
 
