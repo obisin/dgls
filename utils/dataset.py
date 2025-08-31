@@ -7,6 +7,7 @@ import os
 import hashlib
 import json
 import tarfile
+from inspect import signature
 
 import numpy as np
 import torch
@@ -27,6 +28,7 @@ DEBUG = False
 IMAGE_SIZE_ROUND_TO_MULTIPLE = 32
 NUM_PROC = min(8, os.cpu_count())
 CAPTIONS_JSON_FILE = 'captions.json'
+ROUND_DECIMAL_DIGITS = 3
 
 UNCOND_FRACTION = 0.0
 
@@ -52,11 +54,23 @@ def shuffle_captions(captions: list[str], count: int = 0, delimiter: str = ', ',
 
 def bucket_suffix(key):
     if len(key) == 2:
-        return f'{key[0]:.3f}_{key[1]}'
+        # AR, frames
+        return f'{key[0]:.{ROUND_DECIMAL_DIGITS}f}_{key[1]}'
     elif len(key) == 3:
+        # width, height, frames
         return f'{key[0]}x{key[1]}x{key[2]}'
+    elif len(key) == 4:
+        # AR, width, height, frames
+        return f'{key[0]:.{ROUND_DECIMAL_DIGITS}f}x{key[1]}x{key[2]}x{key[3]}'
     else:
         raise RuntimeError(f'Unexpected bucket: {key}')
+
+
+def dedup_and_sort(values):
+    values = set(round(x, ROUND_DECIMAL_DIGITS) for x in values)
+    values = list(values)
+    values.sort()
+    return np.array(values)
 
 
 def _map_and_cache(dataset, map_fn, cache_dir, cache_file_prefix='', new_fingerprint_args=None, regenerate_cache=False, caching_batch_size=1):
@@ -116,13 +130,15 @@ class TextEmbeddingDataset:
 def _cache_text_embeddings(metadata_dataset, map_fn, i, cache_dir, regenerate_cache, caching_batch_size):
 
     def flatten_captions(example):
-        image_spec_out, caption_out, is_video_out = [], [], []
-        for image_spec, captions, is_video in zip(example['image_spec'], example['caption'], example['is_video']):
+        result = {key: [] for key in example}
+        for i, captions in enumerate(example['caption']):
             for caption in captions:
-                image_spec_out.append(image_spec)
-                caption_out.append(caption)
-                is_video_out.append(is_video)
-        return {'image_spec': image_spec_out, 'caption': caption_out, 'is_video': is_video_out}
+                result['caption'].append(caption)
+                for key, value in example.items():
+                    if key == 'caption':
+                        continue
+                    result[key].append(value[i])
+        return result
 
     flattened_captions = metadata_dataset.map(flatten_captions, batched=True, keep_in_memory=True, remove_columns=metadata_dataset.column_names)
     te_dataset = _map_and_cache(
@@ -140,13 +156,19 @@ def _cache_text_embeddings(metadata_dataset, map_fn, i, cache_dir, regenerate_ca
 # The smallest unit of a dataset. Represents a single size bucket from a single folder of images
 # and captions on disk. Not batched; returns individual items.
 class SizeBucketDataset:
-    def __init__(self, metadata_dataset, directory_config, size_bucket, model_name):
+    def __init__(self, metadata_dataset, directory_config, size_bucket, cache_base):
         self.metadata_dataset = metadata_dataset
         self.directory_config = directory_config
         self.size_bucket = size_bucket
-        self.model_name = model_name
         self.path = Path(self.directory_config['path'])
-        self.cache_dir = self.path / 'cache' / self.model_name / f'cache_{bucket_suffix(size_bucket)}'
+        self.cache_dir = cache_base / f'cache_{bucket_suffix(size_bucket)}'
+
+        if len(size_bucket) == 4:
+            # rename old folder name to the new one for convenience
+            old_cache_dir = cache_base / f'cache_{bucket_suffix(size_bucket[1:])}'
+            if old_cache_dir.exists() and not self.cache_dir.exists():
+                old_cache_dir.rename(self.cache_dir)
+
         os.makedirs(self.cache_dir, exist_ok=True)
         self.text_embedding_datasets = []
         self.uncond_text_embeddings = []
@@ -266,15 +288,15 @@ class ConcatenatedBatchedDataset:
 
 
 class ARBucketDataset:
-    def __init__(self, ar_frames, resolutions, metadata_dataset, directory_config, model_name):
+    def __init__(self, ar_frames, resolutions, metadata_dataset, directory_config, cache_base):
         self.ar_frames = ar_frames
         self.resolutions = resolutions
         self.metadata_dataset = metadata_dataset
         self.directory_config = directory_config
-        self.model_name = model_name
         self.size_buckets = []
         self.path = Path(directory_config['path'])
-        self.cache_dir = self.path / 'cache' / self.model_name / f'ar_frames_{bucket_suffix(self.ar_frames)}'
+        self.cache_base = cache_base
+        self.cache_dir = cache_base / f'ar_frames_{bucket_suffix(self.ar_frames)}'
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def get_size_bucket_datasets(self):
@@ -290,14 +312,16 @@ class ARBucketDataset:
             w = round_to_nearest_multiple(w, IMAGE_SIZE_ROUND_TO_MULTIPLE)
             h = round_to_nearest_multiple(h, IMAGE_SIZE_ROUND_TO_MULTIPLE)
             size_bucket = (w, h, self.ar_frames[1])
+            # to make sure the directory has a unique name
+            naming_size_bucket = (self.ar_frames[0],) + size_bucket
             metadata_with_size_bucket = self.metadata_dataset.map(
                 lambda example: {'size_bucket': size_bucket},
-                cache_file_name=str(self.cache_dir / 'metadata/metadata_with_size_bucket.arrow'),
-                load_from_cache_file=(not regenerate_cache),
+                cache_file_name=str(self.cache_dir / f'metadata/metadata_{bucket_suffix(naming_size_bucket)}.arrow'),
+                load_from_cache_file=(not regenerate_cache and trust_cache),
                 desc='Adding size bucket',
             )
             self.size_buckets.append(
-                SizeBucketDataset(metadata_with_size_bucket, self.directory_config, size_bucket, self.model_name)
+                SizeBucketDataset(metadata_with_size_bucket, self.directory_config, naming_size_bucket, self.cache_base)
             )
 
         for ds in self.size_buckets:
@@ -332,6 +356,7 @@ class DirectoryDataset:
             self.resolutions = self._process_user_provided_resolutions(
                 directory_config.get('resolutions', dataset_config['resolutions'])
             )
+            self.resolutions = dedup_and_sort(self.resolutions)
             self.ar_bucket_datasets = []
         self.shuffle = directory_config.get('cache_shuffle_num', dataset_config.get('cache_shuffle_num', 0))
         self.directory_config['cache_shuffle_num'] = self.shuffle # Make accessible if it wasn't yet, for picking one out
@@ -364,6 +389,7 @@ class DirectoryDataset:
             max_ar = self.directory_config.get('max_ar', self.dataset_config['max_ar'])
             num_ar_buckets = self.directory_config.get('num_ar_buckets', self.dataset_config['num_ar_buckets'])
             self.ars = np.geomspace(min_ar, max_ar, num=num_ar_buckets)
+        self.ars = dedup_and_sort(self.ars)
         self.log_ars = np.log(self.ars)
         frame_buckets = self.directory_config.get('frame_buckets', self.dataset_config.get('frame_buckets', [1]))
         if 1 not in frame_buckets:
@@ -420,7 +446,7 @@ class DirectoryDataset:
                         metadata,
                         self.directory_config,
                         grouping_key,
-                        self.model_name,
+                        self.cache_dir,
                     )
                 )
             else:
@@ -430,7 +456,7 @@ class DirectoryDataset:
                         self.resolutions,
                         metadata,
                         self.directory_config,
-                        self.model_name,
+                        self.cache_dir,
                     )
                 )
 
@@ -541,7 +567,7 @@ class DirectoryDataset:
                 metadata_dataset = metadata_dataset.map(
                     add_captions,
                     cache_file_name=str(self.cache_dir / 'metadata/metadata_with_captions.arrow'),
-                    load_from_cache_file=(not regenerate_cache),
+                    load_from_cache_file=(not regenerate_cache and trust_cache),
                     desc='Adding captions',
                 )
                 del caption_data
@@ -708,25 +734,21 @@ class DirectoryDataset:
         return size_bucket
 
     def _process_user_provided_ars(self, ars):
-        ar_buckets = set()
+        ar_buckets = []
         for ar in ars:
             if isinstance(ar, (tuple, list)):
                 assert len(ar) == 2
-                ar = round(ar[0] / ar[1], 6)
-            ar_buckets.add(ar)
-        ar_buckets = list(ar_buckets)
-        ar_buckets.sort()
-        return np.array(ar_buckets)
+                ar = ar[0] / ar[1]
+            ar_buckets.append(ar)
+        return ar_buckets
 
     def _process_user_provided_resolutions(self, resolutions):
-        result = set()
+        result = []
         for res in resolutions:
             if isinstance(res, (tuple, list)):
                 assert len(res) == 2
-                res = round(math.sqrt(res[0] * res[1]), 6)
-            result.add(res)
-        result = list(result)
-        result.sort()
+                res = math.sqrt(res[0] * res[1])
+            result.append(res)
         return result
 
     def get_size_bucket_datasets(self):
@@ -754,7 +776,7 @@ class DirectoryDataset:
             empty_caption_ds,
             map_fn,
             cache_dir=self.cache_dir,
-            cache_file_prefix='uncond_text_embeddings_',
+            cache_file_prefix=f'uncond_text_embeddings_{i}_',
             regenerate_cache=regenerate_cache,
         )
         for size_bucket_ds in self.get_size_bucket_datasets():
@@ -849,13 +871,16 @@ class Dataset:
     # Each feature can be a tensor, list, or single item.
     def _collate(self, examples):
         ret = {}
-        for key, value in examples[0].items():
+        for key in examples[0]:
             if key == 'mask':
                 continue  # mask is handled specially below
-            if torch.is_tensor(value):
-                ret[key] = torch.stack([example[key] for example in examples])
-            else:
-                ret[key] = [example[key] for example in examples]
+            features = [example[key] for example in examples]
+            if torch.is_tensor(features[0]):
+                shape = features[0].shape
+                if all(f.shape == shape for f in features):
+                    # if we can form a single batched tensor, do it
+                    features = torch.stack(features)
+            ret[key] = features
         # Only some items in the batch might have valid mask.
         masks = [example['mask'] for example in examples]
         # See if we have any valid masks. If we do, they should all have the same shape.
@@ -955,7 +980,8 @@ def _cache_fn(datasets, queue, preprocess_media_file_fn, num_text_encoders, rege
     for text_encoder_idx in range(num_text_encoders):
         def text_embedding_map_fn(example, rank):
             parent_conn, child_conn = pipes.setdefault(rank, mp.Pipe(duplex=False))
-            queue.put((text_encoder_idx+1, example['caption'], example['is_video'], child_conn))
+            control_file = example['control_file'] if 'control_file' in example else None
+            queue.put((text_encoder_idx+1, example['caption'], example['is_video'], control_file, child_conn))
             result = parent_conn.recv()  # dict
             result['image_spec'] = example['image_spec']
             return result
@@ -976,6 +1002,10 @@ class DatasetManager:
         self.submodels = [self.vae] + list(self.text_encoders)
         self.call_vae_fn = self.model.get_call_vae_fn(self.vae)
         self.call_text_encoder_fns = [self.model.get_call_text_encoder_fn(text_encoder) for text_encoder in self.text_encoders]
+        self.te_fn_requires_control_file = [
+            len(signature(fn).parameters) == 3
+            for fn in self.call_text_encoder_fns
+        ]
         self.regenerate_cache = regenerate_cache
         self.trust_cache = trust_cache
         self.caching_batch_size = caching_batch_size
@@ -1061,15 +1091,24 @@ class DatasetManager:
             else:
                 results = self.call_vae_fn(tensor)
         elif id > 0:
-            caption, is_video, pipe = task[1:]
-            results = self.call_text_encoder_fns[id-1](caption, is_video=is_video)
+            caption, is_video, control_file, pipe = task[1:]
+            args = [caption, is_video]
+            idx = id - 1
+            if self.te_fn_requires_control_file[idx]:
+                args.append(control_file)
+            results = self.call_text_encoder_fns[idx](*args)
         else:
             raise RuntimeError()
         # Need to move to CPU here. If we don't, we get this error:
         # RuntimeError: Cannot re-initialize CUDA in forked subprocess. To use CUDA with multiprocessing, you must use the 'spawn' start method
         # I think this is because HF Datasets uses the multiprocess library (different from Python multiprocessing!) so it will always use fork.
-        results = {k: v.to('cpu') for k, v in results.items()}
-        pipe.send(results)
+        cpu_results = {}
+        for k, v in results.items():
+            if isinstance(v, list):
+                cpu_results[k] = [x.to('cpu') for x in v]
+            else:
+                cpu_results[k] = v.to('cpu')
+        pipe.send(cpu_results)
 
 
 def split_batch(batch, pieces):
